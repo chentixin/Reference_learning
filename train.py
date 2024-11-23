@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 import gym
 from parsers import args
 from DDPG import ReplayBuffer, DDPG
+from Fly_DDPG import Fly_DDPG
+from Task_DDPG import Task_DDPG
 from env import UAV_env
 from tqdm import tqdm
 
@@ -96,21 +98,38 @@ env = UAV_env(max_x = args.max_x, max_y= args.max_y,
               beta=args.beta, u=args.u, sigma2=args.sigma2,
               T_max=args.T_max,T_min=args.T_min)
 
-n_states = args.N_WD + 2
-n_actions = 1
-action_bound = math.pi
+# 参数初始化
+fly_n_states = args.N_WD * 3 + 2
+fly_n_actions = 1
+fly_action_bound = math.pi
+
+task_n_states = args.task_max_off_wd * (args.task_max_off_task + 1)
+task_n_actions = args.task_max_off_wd + 1
+
 # 经验回放池实例化
-replay_buffer = ReplayBuffer(capacity=args.buffer_size)
+fly_replay_buffer = ReplayBuffer(capacity=args.fly_buffer_size)
+task_replay_buffer = ReplayBuffer(capacity=args.task_buffer_size)
 # 模型实例化
-agent = DDPG(n_states=n_states,  # 状态数
-             n_hiddens=args.n_hiddens,  # 隐含层数
-             n_actions=n_actions,  # 动作数
-             action_bound=action_bound,  # 动作最大值
-             sigma=args.sigma,  # 高斯噪声
-             actor_lr=args.actor_lr,  # 策略网络学习率
-             critic_lr=args.critic_lr,  # 价值网络学习率
-             tau=args.tau,  # 软更新系数
-             gamma=args.gamma,  # 折扣因子
+fly_agent = Fly_DDPG(n_states=fly_n_states,  # 状态数
+             n_hiddens=args.fly_n_hiddens,  # 隐含层数
+             n_actions=fly_n_actions,  # 动作数
+             action_bound=fly_action_bound,  # 动作最大值
+             sigma=args.fly_sigma,  # 高斯噪声
+             actor_lr=args.fly_actor_lr,  # 策略网络学习率
+             critic_lr=args.fly_critic_lr,  # 价值网络学习率
+             tau=args.fly_tau,  # 软更新系数
+             gamma=args.fly_gamma,  # 折扣因子
+             device=device
+             )
+
+task_agent = Task_DDPG(n_states=task_n_states,  # 状态数
+             n_hiddens=args.task_n_hiddens,  # 隐含层数
+             n_actions=task_n_actions,  # 动作数
+             sigma=args.fly_sigma,  # 高斯噪声
+             actor_lr=args.fly_actor_lr,  # 策略网络学习率
+             critic_lr=args.fly_critic_lr,  # 价值网络学习率
+             tau=args.fly_tau,  # 软更新系数
+             gamma=args.fly_gamma,  # 折扣因子
              device=device
              )
 
@@ -123,36 +142,36 @@ mean_return_list = []  # 记录每个回合的return均值
 num_start = 0
 num_epochs = 10000
 
-# 进行断点重训
-if args.is_continue:
-    print("continue train")
-    agent.actor.load_state_dict(torch.load("action.pt"))
-    agent.critic.load_state_dict(torch.load("critic.pt"))
-    # 加载环境
-    with open("state.txt", 'r') as file:
-        wd_id = 0
-        for line in file:
-            env.WDs[wd_id].x = (float(line.strip()))
-            line = file.readline()
-            env.WDs[wd_id].y = (float(line.strip()))
-            wd_id += 1
-
-    # 加载学习率
-    with open("parsers.txt", 'r') as file:
-        line = file.readline()
-        num_start = (int(line.strip()))
-        line = file.readline()
-        args.actor_lr = (float(line.strip()))
-        line = file.readline()
-        args.critic_lr = (float(line.strip()))
-        print(args.actor_lr, args.critic_lr)
-elif args.is_use:
-    print("use last pt")
-    agent.actor.load_state_dict(torch.load("action.pt"))
-    agent.critic.load_state_dict(torch.load("critic.pt"))
-else:
-    # 记录本次环境信息
-    env.save_state("state.txt")
+# # 进行断点重训
+# if args.is_continue:
+#     print("continue train")
+#     agent.actor.load_state_dict(torch.load("action.pt"))
+#     agent.critic.load_state_dict(torch.load("critic.pt"))
+#     # 加载环境
+#     with open("state.txt", 'r') as file:
+#         wd_id = 0
+#         for line in file:
+#             env.WDs[wd_id].x = (float(line.strip()))
+#             line = file.readline()
+#             env.WDs[wd_id].y = (float(line.strip()))
+#             wd_id += 1
+#
+#     # 加载学习率
+#     with open("parsers.txt", 'r') as file:
+#         line = file.readline()
+#         num_start = (int(line.strip()))
+#         line = file.readline()
+#         args.actor_lr = (float(line.strip()))
+#         line = file.readline()
+#         args.critic_lr = (float(line.strip()))
+#         print(args.actor_lr, args.critic_lr)
+# elif args.is_use:
+#     print("use last pt")
+#     agent.actor.load_state_dict(torch.load("action.pt"))
+#     agent.critic.load_state_dict(torch.load("critic.pt"))
+# else:
+#     # 记录本次环境信息
+#     env.save_state("state.txt")
 
 try:
     for i in range(num_start, num_epochs):  # 迭代10回合
@@ -167,20 +186,23 @@ try:
         else:
             args.actor_lr *= 0.9998
             args.critic_lr *= 0.9998
-        agent.change_lr(args.actor_lr, args.critic_lr)
+
+        fly_agent.change_lr(args.fly_actor_lr, args.fly_critic_lr)
+        task_agent.change_lr(args.task_actor_lr, args.task_critic_lr)
 
         loop = tqdm(range(60))
         for j in loop:
-            state = env.update_env([])
-            #print(state)
+            state_task, state_fly = env.update_env([])
             # 获取当前状态对应的动作
-            action = agent.take_action(state)
+            fly_action = fly_agent.take_action(state)
+            task_action = task_agent.take_action(state)
+
             # 随机探索（逐渐减弱）若加载已经训练过的模型则不随机
             if i < 2000 and not args.is_continue:
-                action += np.random.normal(loc=0, scale=0.1 * np.cos((i * math.pi) / (2 * 2000)))
+                fly_action += np.random.normal(loc=0, scale=0.1 * np.cos((i * math.pi) / (2 * 2000)))
 
             # 环境更新
-            next_state, reward, done = env.step(action)
+            next_state, reward, done = env.step(fly_action, task_action)
             replay_buffer.add(state, action, reward, next_state, done)
             state = next_state
             episode_return += reward

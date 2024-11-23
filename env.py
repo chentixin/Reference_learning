@@ -137,43 +137,43 @@ class UAV_env:
             state.append(len(each.all_task))
         return np.array(state, dtype=float)
 
-    def step(self, angle):
-        self.U_x += math.cos(angle) * self.V
-        self.U_y += math.sin(angle) * self.V
-        # self.U_x = self.WDs[0].x
-        # self.U_y = self.WDs[0].y
+    def step(self, fly_action, task_action, off_number):
+        all_off_data = 0
+        for i,index in enumerate(off_number):
+            all_off_data += self.WDs[index].offload_task(task_action[i+1], task_action[0], [self.U_x, self.U_y],self.H)
+        task_reward = float(all_off_data)
 
-        all_initiail_B = 0
+        self.U_x += math.cos(fly_action) * self.V
+        self.U_y += math.sin(fly_action) * self.V
+
+        all_env_data = 0
         for each in self.WDs:
-            all_initiail_B += each.get_all_data()
+            all_env_data += each.get_all_data()
 
-        out_t = []
-        done = 0
         max_r = self.H * math.tan(self.max_angle)
         is_ok = lambda x : x.get_level_distance([self.U_x, self.U_y]) <= max_r
         indices = [index for index, value in enumerate(self.WDs) if is_ok(value)]
 
-        all_offset_B = 0
-        for index, value in enumerate(indices):
-            all_offset_B += self.WDs[value].offload_task(0.167,0.167,[self.U_x, self.U_y],self.H)
+        all_in_data = 0
+        for index in indices:
+            all_in_data += self.WDs[index].get_all_data()
 
-        next_state = []
-        next_state.append(self.U_x)
-        next_state.append(self.U_y)
+        fly_next_state = []
+        fly_next_state.append(self.U_x)
+        fly_next_state.append(self.U_y)
         for each in self.WDs:
-            # next_state += [each.x,each.y]
-            next_state.append(each.get_all_data()/10)
+            # fly_next_state += [each.x,each.y]
+            fly_next_state.append(each.get_all_data()/10)
 
-        if all_initiail_B == 0:
-            return np.array(next_state, dtype=float), 0, done
-        # print("all",te)
-        # print("all_offset_B",all_offset_B)
-        # print("____________________")
+        if all_in_data != 0:
+            fly_reward = all_in_data * 1.0 / all_env_data
+        else:
+            fly_reward = 0
 
-        reward = all_offset_B * 1.0 / all_initiail_B
         if self.U_x < 0 or self.U_x > self.max_x or self.U_y < 0 or self.U_y > self.max_y:
-            reward *= 0.9
-        return np.array(next_state, dtype=float), reward, done
+            fly_reward *= 0.9
+            
+        return np.array(fly_next_state, dtype=float), fly_reward
 
         # 在开头生成任务，更新环境
 
@@ -182,20 +182,20 @@ class UAV_env:
             each.del_task()
             each.creat_task()
 
-        state1 = []
+        state_task = []
         for i in range(self.max_off_wd):
             if i < len(off_number):
-                state1 += [self.WDs[off_number[i]].get_distance([self.U_x, self.U_y], self.H)]
-                state1 += self.WDs[off_number[i]].get_max_task(self.max_off_task)
+                state_task += [self.WDs[off_number[i]].get_distance([self.U_x, self.U_y], self.H)]
+                state_task += self.WDs[off_number[i]].get_max_task(self.max_off_task)
             else:
-                state1 += [0 for i in range(self.max_off_task + 1)]
+                state_task += [0 for i in range(self.max_off_task + 1)]
 
-        state2 = [self.U_x, self.U_y]
+        state_fly = [self.U_x, self.U_y]
         for each in self.WDs:
-            # state2 += [each.x, each.y]
-            state2.append(each.get_all_data()/10)
+            state_fly += [each.x, each.y]
+            state_fly.append(each.get_all_data()/10)
 
-        return state2
+        return state_task, state_fly
 
     def restart(self):
         state1 = []
